@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Streaming Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f4f8;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        #status {
+            margin-bottom: 20px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .button-container {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+        }
+        #startBtn {
+            background-color: #2ecc71; /* Green */
+            color: white;
+        }
+        #stopBtn {
+            background-color: #e74c3c; /* Red */
+            color: white;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
+        h2 {
+            margin-top: 30px;
+            color: #333;
+        }
+        ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        li {
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #fff; /* White */
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <h1>Audio Streaming Client</h1>
+    <div id="status">Status: Ready</div>
+    
+    <div class="button-container">
+        <button id="startBtn">Start Recording</button>
+        <button id="stopBtn" disabled>Stop Recording</button>
+    </div>
+
+    <h2>Recordings</h2>
+    <ul id="recordingList"></ul>
+
+    <script>
+        let audioContext;
+        let mediaStreamSource;
+        let recorder;
+
+        const socket = new WebSocket('wss://<YOUR_NGROK_SUBDOMAIN>.ngrok.io/ws'); // Update with your ngrok URL
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        const recordingList = document.getElementById('recordingList');
+
+        startBtn.onclick = startRecording;
+        stopBtn.onclick = stopRecording;
+
+        function startRecording() {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    mediaStreamSource = audioContext.createMediaStreamSource(stream);
+                    recorder = new Recorder(mediaStreamSource, { numChannels: 1 });
+                    recorder.record();
+
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    status.textContent = 'Status: Recording...';
+                })
+                .catch(err => {
+                    console.error('Error accessing microphone:', err);
+                    status.textContent = 'Status: Error accessing microphone';
+                });
+        }
+
+        function stopRecording() {
+            recorder.stop();
+            recorder.exportWAV(blob => {
+                console.log('Sending blob to server:', blob.size); // Log the size of the blob
+                socket.send(blob);
+                status.textContent = 'Status: Recording sent to server';
+                console.log('Recording sent to server');
+                startBtn.disabled = false;
+                stopBtn.disabled = true; 
+            });
+         }
+
+         socket.onopen = () => {
+             console.log('WebSocket connected');
+             status.textContent = 'Status: Connected';
+         };
+
+         socket.onmessage = (event) => {
+             const recordings = JSON.parse(event.data);
+             updateRecordingList(recordings);
+         };
+
+         function updateRecordingList(recordings) {
+             recordingList.innerHTML = '';
+             recordings.forEach(recording => {
+                 const li = document.createElement('li');
+                 li.textContent = recording;
+
+                 const audioPlayer = document.createElement('audio');
+                 audioPlayer.src = `recordings/${recording}`;
+                 audioPlayer.controls = true;
+
+                 const deleteButton = document.createElement('button');
+                 deleteButton.textContent = 'Delete';
+                 deleteButton.onclick = () => deleteRecording(recording);
+
+                 li.appendChild(audioPlayer);
+                 li.appendChild(deleteButton);
+                 recordingList.appendChild(li);
+             });
+         }
+
+         function deleteRecording(filename) {
+             fetch(`/delete/${filename}`, { method: 'DELETE' })
+                 .then(response => {
+                     if (response.ok) {
+                         alert(`Deleted ${filename}`);
+                         socket.send(JSON.stringify({ action: 'refresh' }));
+                     } else {
+                         alert(`Failed to delete ${filename}`);
+                     }
+                 });
+         }
+     </script>
+
+     <script src="https://cdn.rawgit.com/mattdiamond/Recorderjs/08e7abd9/dist/recorder.js"></script>
+ </body>
+</html>

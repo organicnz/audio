@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Streaming Client</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f4f8;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 2rem;
+            width: 90%;
+            max-width: 500px;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+        #status {
+            text-align: center;
+            margin: 1rem 0;
+            font-weight: bold;
+            color: #34495e;
+        }
+        .button-container {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+        button {
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        #startBtn {
+            background-color: #2ecc71;
+            color: white;
+        }
+        #stopBtn {
+            background-color: #e74c3c;
+            color: white;
+        }
+        button:hover {
+            opacity: 0.9;
+            transform: scale(1.05);
+        }
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+            transform: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Audio Streaming Client</h1>
+        <div id="status">Status: Ready</div>
+        <div class="button-container">
+            <button id="startBtn">Start Recording</button>
+            <button id="stopBtn" disabled>Stop Recording</button>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        const socket = new WebSocket('ws://' + window.location.host + '/ws');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+
+        startBtn.onclick = startRecording;
+        stopBtn.onclick = stopRecording;
+
+        function startRecording() {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.start();
+
+                    mediaRecorder.ondataavailable = event => {
+                        audioChunks.push(event.data);
+                    };
+
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    status.textContent = 'Status: Recording...';
+                })
+                .catch(err => {
+                    console.error('Error accessing microphone:', err);
+                    status.textContent = 'Status: Error accessing microphone';
+                });
+        }
+
+        function stopRecording() {
+            mediaRecorder.stop();
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                socket.send(audioBlob);
+                audioChunks = [];
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                status.textContent = 'Status: Recording sent to server';
+            };
+        }
+
+        socket.onopen = () => {
+            console.log('WebSocket connected');
+            status.textContent = 'Status: Connected';
+        };
+
+        socket.onclose = () => {
+            console.log('WebSocket disconnected');
+            status.textContent = 'Status: Disconnected';
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Streaming Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        h1 {
+            color: #333;
+        }
+        #status, #audioStatus, #debugInfo {
+            margin: 20px 0;
+            font-weight: bold;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 0 10px;
+            cursor: pointer;
+        }
+        #recordingsList {
+            list-style-type: none;
+            padding: 0;
+            margin-top: 20px;
+        }
+        #recordingsList li {
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Audio Streaming Client</h1>
+    <div id="debugInfo">{{ debug_info }}</div>
+    <div id="status">Status: Not connected</div>
+    <button id="startBtn">Start Streaming</button>
+    <button id="stopBtn" disabled>Stop Streaming</button>
+    <div id="audioStatus">Audio Status: Unknown</div>
+    <ul id="recordingsList"></ul>
+
+    <script>
+        let socket;
+        let mediaRecorder;
+        let audioChunks = [];
+        let recordingCounter = 0;
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        const audioStatus = document.getElementById('audioStatus');
+        const recordingsList = document.getElementById('recordingsList');
+
+        startBtn.onclick = startStreaming;
+        stopBtn.onclick = stopStreaming;
+
+        function startStreaming() {
+            audioStatus.textContent = 'Audio Status: Start button clicked';
+            status.textContent = 'Status: Attempting to connect...';
+
+            socket = new WebSocket('ws://' + window.location.host + '/ws');
+            
+            socket.onopen = () => {
+                status.textContent = 'Status: WebSocket Connected';
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(stream => {
+                        audioStatus.textContent = 'Audio Status: Access granted';
+                        mediaRecorder = new MediaRecorder(stream);
+                        mediaRecorder.ondataavailable = event => {
+                            audioChunks.push(event.data);
+                            if (audioChunks.length > 0) {
+                                const audioBlob = new Blob(audioChunks);
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                    const base64data = reader.result.split(',')[1];
+                                    socket.send(JSON.stringify({
+                                        event: 'audio',
+                                        data: base64data
+                                    }));
+                                };
+                                reader.readAsDataURL(audioBlob);
+                                audioChunks = [];
+                            }
+                        };
+                        mediaRecorder.start(100);
+                        socket.send(JSON.stringify({ event: 'start' }));
+                        startBtn.disabled = true;
+                        stopBtn.disabled = false;
+                        audioStatus.textContent = 'Audio Status: Streaming';
+                    })
+                    .catch(err => {
+                        audioStatus.textContent = 'Audio Status: Error accessing microphone: ' + err.message;
+                    });
+            };
+
+            socket.onclose = () => {
+                status.textContent = 'Status: WebSocket Disconnected';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            };
+
+            socket.onerror = (error) => {
+                status.textContent = 'Status: WebSocket Error: ' + error.message;
+            };
+        }
+
+        function stopStreaming() {
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+            }
+            if (socket) {
+                socket.send(JSON.stringify({ event: 'stop' }));
+                socket.close();
+            }
+            recordingCounter++;
+            const listItem = document.createElement('li');
+            listItem.textContent = `Recording ${recordingCounter} saved`;
+            recordingsList.appendChild(listItem);
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            audioStatus.textContent = 'Audio Status: Stopped';
+            status.textContent = 'Status: Disconnected';
+        }
+    </script>
+</body>
+</html>

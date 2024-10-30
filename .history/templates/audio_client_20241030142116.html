@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Streaming Client</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f4f8;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 2rem;
+            width: 90%;
+            max-width: 500px;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+        #status, #audioStatus {
+            text-align: center;
+            margin: 1rem 0;
+            font-weight: bold;
+            color: #34495e;
+        }
+        .button-container {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+        button {
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        #startBtn {
+            background-color: #2ecc71;
+            color: white;
+        }
+        #stopBtn {
+            background-color: #e74c3c;
+            color: white;
+        }
+        button:hover {
+            opacity: 0.9;
+            transform: scale(1.05);
+        }
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+            transform: none;
+        }
+        #recordingsList {
+            list-style-type: none;
+            padding: 0;
+            margin-top: 1.5rem;
+        }
+        #recordingsList li {
+            background-color: #ecf0f1;
+            margin: 0.5rem 0;
+            padding: 0.75rem;
+            border-radius: 4px;
+            text-align: center;
+        }
+        #visualizer {
+            width: 100%;
+            height: 100px;
+            background-color: #2c3e50;
+            margin-top: 1.5rem;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Audio Streaming Client</h1>
+        <div id="status">Status: Not connected</div>
+        <div id="audioStatus">Audio Status: Ready</div>
+        <div class="button-container">
+            <button id="startBtn">Start Streaming</button>
+            <button id="stopBtn" disabled>Stop Streaming</button>
+        </div>
+        <canvas id="visualizer"></canvas>
+        <ul id="recordingsList"></ul>
+    </div>
+
+    <script>
+        let socket;
+        let audioContext;
+        let mediaStreamSource;
+        let scriptProcessor;
+        let analyser;
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        const audioStatus = document.getElementById('audioStatus');
+        const recordingsList = document.getElementById('recordingsList');
+        const visualizer = document.getElementById('visualizer');
+        const visualizerContext = visualizer.getContext('2d');
+
+        startBtn.onclick = startStreaming;
+        stopBtn.onclick = stopStreaming;
+
+        function startStreaming() {
+            audioStatus.textContent = 'Audio Status: Initializing...';
+            status.textContent = 'Status: Connecting...';
+
+            socket = new WebSocket('ws://' + window.location.host + '/ws');
+            
+            socket.onopen = () => {
+                status.textContent = 'Status: Connected';
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(stream => {
+                        audioStatus.textContent = 'Audio Status: Microphone access granted';
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        mediaStreamSource = audioContext.createMediaStreamSource(stream);
+                        analyser = audioContext.createAnalyser();
+                        scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                        mediaStreamSource.connect(analyser);
+                        analyser.connect(scriptProcessor);
+                        scriptProcessor.connect(audioContext.destination);
+
+                        scriptProcessor.onaudioprocess = function(audioProcessingEvent) {
+                            const inputBuffer = audioProcessingEvent.inputBuffer;
+                            const inputData = inputBuffer.getChannelData(0);
+
+                            // Convert float32 to int16
+                            const pcmData = new Int16Array(inputData.length);
+                            for (let i = 0; i < inputData.length; i++) {
+                                pcmData[i] = inputData[i] * 0x7FFF;
+                            }
+
+                            socket.send(JSON.stringify({
+                                event: 'audio',
+                                data: Array.from(pcmData)
+                            }));
+
+                            drawVisualizer();
+                        };
+
+                        startBtn.disabled = true;
+                        stopBtn.disabled = false;
+                        audioStatus.textContent = 'Audio Status: Streaming';
+                    })
+                    .catch(err => {
+                        audioStatus.textContent = 'Audio Status: Error accessing microphone: ' + err.message;
+                    });
+            };
+
+            socket.onclose = () => {
+                status.textContent = 'Status: Disconnected';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            };
+
+            socket.onerror = (error) => {
+                status.textContent = 'Status: WebSocket Error: ' + error.message;
+            };
+        }
+
+        function stopStreaming() {
+            if (scriptProcessor) {
+                scriptProcessor.disconnect();
+                analyser.disconnect();
+                mediaStreamSource.disconnect();
+                audioContext.close();
+            }
+            if (socket) {
+                socket.send(JSON.stringify({ event: 'stop' }));
+                socket.close();
+            }
+            const listItem = document.createElement('li');
+            listItem.textContent = `Recording saved`;
+            recordingsList.appendChild(listItem);
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            audioStatus.textContent = 'Audio Status: Stopped';
+            status.textContent = 'Status: Disconnected';
+
+            // Clear visualizer
+            visualizerContext.clearRect(0, 0, visualizer.width, visualizer.height);
+        }
+
+        function drawVisualizer() {
+            requestAnimationFrame(drawVisualizer);
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteFrequencyData(dataArray);
+
+            visualizerContext.fillStyle = 'rgb(44, 62, 80)';
+            visualizerContext.fillRect(0, 0, visualizer.width, visualizer.height);
+
+            const barWidth = (visualizer.width / bufferLength) * 2.5;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = dataArray[i] / 2;
+                visualizerContext.fillStyle = `rgb(${barHeight + 100}, 233, 113)`;
+                visualizerContext.fillRect(x, visualizer.height - barHeight, barWidth, barHeight);
+                x += barWidth + 1;
+            }
+        }
+
+        // Set canvas size
+        function resizeCanvas() {
+            visualizer.width = visualizer.clientWidth;
+            visualizer.height = visualizer.clientHeight;
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    </script>
+</body>
+</html>

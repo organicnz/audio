@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Streaming Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        h1 {
+            color: #333;
+        }
+        #status {
+            margin: 20px 0;
+            font-weight: bold;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 0 10px;
+            cursor: pointer;
+        }
+        #recordingsList {
+            list-style-type: none;
+            padding: 0;
+            margin-top: 20px;
+        }
+        #recordingsList li {
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Audio Streaming Client</h1>
+    <div id="status">Status: Not connected</div>
+    <button id="startBtn">Start Streaming</button>
+    <button id="stopBtn" disabled>Stop Streaming</button>
+    <ul id="recordingsList"></ul>
+
+    <script>
+        let socket;
+        let mediaRecorder;
+        let audioChunks = [];
+        let recordingCounter = 0;
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        const recordingsList = document.getElementById('recordingsList');
+
+        startBtn.onclick = startStreaming;
+        stopBtn.onclick = stopStreaming;
+
+        function startStreaming() {
+            socket = new WebSocket('ws://' + window.location.host + '/ws');
+            
+            socket.onopen = () => {
+                status.textContent = 'Status: Connected';
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(stream => {
+                        mediaRecorder = new MediaRecorder(stream);
+                        mediaRecorder.ondataavailable = event => {
+                            audioChunks.push(event.data);
+                            if (audioChunks.length > 0) {
+                                const audioBlob = new Blob(audioChunks);
+                                const reader = new FileReader();
+                                reader.onloadend = () => {
+                                    const base64data = reader.result.split(',')[1];
+                                    socket.send(JSON.stringify({
+                                        event: '
